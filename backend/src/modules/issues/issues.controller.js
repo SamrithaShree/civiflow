@@ -25,15 +25,17 @@ const create = async (req, res) => {
 
 const list = async (req, res) => {
     try {
-        const { status, category, page, limit } = req.query;
+        const { status, category, search, sla_breached, ward_id, page, limit } = req.query;
         const result = await issuesService.getIssues({
             role: req.user.role,
             userId: req.user.id,
-            wardId: req.user.ward_id,
+            wardId: ward_id || req.user.ward_id,
             status,
             category,
+            search,
+            sla_breached,
             page: parseInt(page) || 1,
-            limit: parseInt(limit) || 20,
+            limit: parseInt(limit) || 50,
         });
         res.json(result);
     } catch (err) {

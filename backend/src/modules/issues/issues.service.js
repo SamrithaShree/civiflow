@@ -145,7 +145,7 @@ const autoAssignWorker = async (issueId, departmentId, wardId) => {
 /**
  * Get all issues, filtered by role.
  */
-const getIssues = async ({ role, userId, wardId, status, category, page = 1, limit = 20 }) => {
+const getIssues = async ({ role, userId, wardId, status, category, search, sla_breached, page = 1, limit = 20 }) => {
     const offset = (page - 1) * limit;
     let whereConditions = [];
     let params = [];
@@ -163,8 +163,20 @@ const getIssues = async ({ role, userId, wardId, status, category, page = 1, lim
     }
     // ADMIN gets all
 
+    if (wardId && (role === 'ADMIN' || role === 'SUPERVISOR')) {
+        whereConditions.push(`i.ward_id = $${paramIdx++}`);
+        params.push(wardId);
+    }
     if (status) { whereConditions.push(`i.status = $${paramIdx++}`); params.push(status); }
     if (category) { whereConditions.push(`i.category = $${paramIdx++}`); params.push(category); }
+    if (search) {
+        whereConditions.push(`(i.description ILIKE $${paramIdx} OR i.ticket_id ILIKE $${paramIdx})`);
+        params.push(`%${search}%`);
+        paramIdx++;
+    }
+    if (sla_breached === 'true' || sla_breached === true) {
+        whereConditions.push(`(i.sla_deadline < NOW() AND i.status NOT IN ('CLOSED'))`);
+    }
 
     const where = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
 

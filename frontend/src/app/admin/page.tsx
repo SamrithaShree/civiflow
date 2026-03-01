@@ -1,9 +1,16 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { getIssues, getOverview, getWardStats, getSLAMetrics, getDeptPerformance, getIncidentMode, toggleIncidentMode, getAllUsers } from '@/lib/api';
+import {
+    getIssues, getOverview, getWardStats, getSLAMetrics, getDeptPerformance,
+    getIncidentMode, toggleIncidentMode, getAllUsers
+} from '@/lib/api';
 import StatusBadge from '@/components/StatusBadge';
+import FilterBar from '@/components/FilterBar';
+import dynamic from 'next/dynamic';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
+
+const IssueMap = dynamic(() => import('@/components/IssueMap'), { ssr: false });
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6'];
 
@@ -15,52 +22,64 @@ export default function AdminDashboard() {
     const [slaMetrics, setSlaMetrics] = useState<any[]>([]);
     const [deptPerf, setDeptPerf] = useState<any[]>([]);
     const [issues, setIssues] = useState<any[]>([]);
+    const [total, setTotal] = useState(0);
     const [incident, setIncident] = useState<any>(null);
     const [users, setUsers] = useState<any[]>([]);
-    const [tab, setTab] = useState<'overview' | 'issues' | 'users' | 'analytics'>('overview');
+    const [tab, setTab] = useState<'overview' | 'issues' | 'users' | 'analytics' | 'map'>('overview');
     const [msg, setMsg] = useState('');
+    const [filters, setFilters] = useState({});
 
     useEffect(() => {
         const u = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('civiflow_user') || 'null') : null;
         if (!u || u.role !== 'ADMIN') { router.push('/login'); return; }
         setUser(u);
-        fetchAll();
+        fetchAll({});
     }, []);
 
-    const fetchAll = async () => {
+    const fetchAll = useCallback(async (params: any) => {
         try {
             const [ovRes, wdRes, slRes, dpRes, isRes, inRes, urRes] = await Promise.all([
-                getOverview(), getWardStats(), getSLAMetrics(), getDeptPerformance(), getIssues(), getIncidentMode(), getAllUsers()
+                getOverview(), getWardStats(), getSLAMetrics(), getDeptPerformance(),
+                getIssues(params), getIncidentMode(), getAllUsers()
             ]);
             setOverview(ovRes.data);
             setWardStats(wdRes.data || []);
             setSlaMetrics(slRes.data || []);
             setDeptPerf(dpRes.data || []);
             setIssues(isRes.data?.issues || []);
+            setTotal(isRes.data?.total || 0);
             setIncident(inRes.data);
             setUsers(urRes.data || []);
         } catch (err: any) {
-            setMsg('Failed to load some data: ' + (err.response?.data?.error || err.message));
+            setMsg('Failed to load data: ' + (err.response?.data?.error || err.message));
         }
+    }, []);
+
+    const handleFilter = (params: any) => {
+        setFilters(params);
+        getIssues(params).then(res => {
+            setIssues(res.data?.issues || []);
+            setTotal(res.data?.total || 0);
+        }).catch(() => { });
     };
 
     const handleIncidentToggle = async () => {
         const activate = !incident?.active;
         try {
             await toggleIncidentMode(activate, activate ? 'Emergency mode activated by admin' : 'Emergency mode deactivated');
-            setMsg(activate ? '🚨 Incident Mode ACTIVATED — priority weights doubled, SLA tightened.' : '✅ Incident Mode deactivated.');
-            await fetchAll();
+            setMsg(activate ? '🚨 Incident Mode ACTIVATED' : '✅ Incident Mode deactivated.');
+            fetchAll(filters);
         } catch (err: any) { setMsg(err.response?.data?.error || 'Error'); }
     };
 
     const logout = () => { localStorage.clear(); router.push('/login'); };
 
     const pieData = overview ? [
-        { name: 'New', value: parseInt(overview.new_count) },
-        { name: 'In Progress', value: parseInt(overview.in_progress_count) },
-        { name: 'Resolved', value: parseInt(overview.resolved_count) },
-        { name: 'Closed', value: parseInt(overview.closed_count) },
-        { name: 'Reopened', value: parseInt(overview.reopened_count) },
+        { name: 'New', value: parseInt(overview.new_count) || 0 },
+        { name: 'In Progress', value: parseInt(overview.in_progress_count) || 0 },
+        { name: 'Resolved', value: parseInt(overview.resolved_count) || 0 },
+        { name: 'Closed', value: parseInt(overview.closed_count) || 0 },
+        { name: 'Reopened', value: parseInt(overview.reopened_count) || 0 },
     ].filter(d => d.value > 0) : [];
 
     return (
@@ -98,7 +117,7 @@ export default function AdminDashboard() {
                     <div className="grid grid-cols-4 gap-4 mb-6">
                         {[
                             { label: 'Total Issues', value: overview.total, color: 'text-indigo-600' },
-                            { label: 'Open Issues', value: parseInt(overview.total) - parseInt(overview.closed_count), color: 'text-yellow-600' },
+                            { label: 'Open Issues', value: parseInt(overview.total) - parseInt(overview.closed_count || 0), color: 'text-yellow-600' },
                             { label: 'Closed', value: overview.closed_count, color: 'text-green-600' },
                             { label: 'SLA Breached', value: overview.sla_breached, color: 'text-red-600' },
                         ].map(k => (
@@ -112,10 +131,11 @@ export default function AdminDashboard() {
 
                 {/* Tabs */}
                 <div className="flex gap-2 mb-5">
-                    {(['overview', 'issues', 'analytics', 'users'] as const).map(t => (
+                    {(['overview', 'issues', 'analytics', 'map', 'users'] as const).map(t => (
                         <button key={t} onClick={() => setTab(t)}
                             className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition ${tab === t ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-400'}`}>
-                            {t}
+                            {t === 'map' ? '🗺️ Map' : t}
+                            {t === 'issues' ? ` (${total})` : ''}
                         </button>
                     ))}
                 </div>
@@ -123,7 +143,6 @@ export default function AdminDashboard() {
                 {/* Overview Tab */}
                 {tab === 'overview' && (
                     <div className="grid grid-cols-2 gap-6">
-                        {/* Pie */}
                         <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
                             <h3 className="font-semibold text-slate-700 mb-4 text-sm">Issue Status Distribution</h3>
                             <ResponsiveContainer width="100%" height={220}>
@@ -131,12 +150,10 @@ export default function AdminDashboard() {
                                     <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>
                                         {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                                     </Pie>
-                                    <Legend />
-                                    <Tooltip />
+                                    <Legend /><Tooltip />
                                 </PieChart>
                             </ResponsiveContainer>
                         </div>
-                        {/* Ward Bar */}
                         <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
                             <h3 className="font-semibold text-slate-700 mb-4 text-sm">Issues by Ward</h3>
                             <ResponsiveContainer width="100%" height={220}>
@@ -144,17 +161,14 @@ export default function AdminDashboard() {
                                     <XAxis dataKey="ward_name" tick={{ fontSize: 10 }} />
                                     <YAxis tick={{ fontSize: 10 }} />
                                     <Tooltip />
-                                    <Bar dataKey="total_issues" fill="#6366f1" radius={4} />
-                                    <Bar dataKey="sla_breached" fill="#ef4444" radius={4} />
+                                    <Bar dataKey="total_issues" fill="#6366f1" radius={4} name="Total" />
+                                    <Bar dataKey="sla_breached" fill="#ef4444" radius={4} name="Breached" />
+                                    <Legend />
                                 </BarChart>
                             </ResponsiveContainer>
                         </div>
-
-                        {/* Department Performance */}
                         <div className="col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                            <div className="px-5 py-4 border-b border-slate-100">
-                                <h3 className="font-semibold text-slate-700 text-sm">Department Performance</h3>
-                            </div>
+                            <div className="px-5 py-4 border-b border-slate-100"><h3 className="font-semibold text-slate-700 text-sm">Department Performance</h3></div>
                             <table className="w-full text-sm">
                                 <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
                                     <tr>{['Department', 'Total', 'Closed', 'SLA Breached', 'Avg Closure (h)'].map(h => <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>)}</tr>
@@ -176,31 +190,34 @@ export default function AdminDashboard() {
                     </div>
                 )}
 
-                {/* All Issues Tab */}
+                {/* Issues Tab */}
                 {tab === 'issues' && (
-                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                        <table className="w-full text-sm">
-                            <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
-                                <tr>{['Ticket', 'Category', 'Ward', 'Severity', 'Status', 'Priority', 'Reporter', 'Worker', 'Created'].map(h => <th key={h} className="px-3 py-3 text-left font-semibold">{h}</th>)}</tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {issues.map(issue => (
-                                    <tr key={issue.id} className={issue.sla_breached ? 'bg-red-50' : ''}>
-                                        <td className="px-3 py-2.5 font-mono text-xs text-indigo-600 font-bold whitespace-nowrap">{issue.ticket_id}</td>
-                                        <td className="px-3 py-2.5 text-xs">{issue.category}</td>
-                                        <td className="px-3 py-2.5 text-xs text-slate-500">{issue.ward_name || '-'}</td>
-                                        <td className="px-3 py-2.5"><span className="text-xs">{issue.severity}</span></td>
-                                        <td className="px-3 py-2.5"><StatusBadge status={issue.status} /></td>
-                                        <td className="px-3 py-2.5 font-medium text-xs">{issue.priority_score}</td>
-                                        <td className="px-3 py-2.5 text-xs">{issue.reporter_name || '-'}</td>
-                                        <td className="px-3 py-2.5 text-xs">{issue.worker_name || <span className="text-orange-500">—</span>}</td>
-                                        <td className="px-3 py-2.5 text-xs text-slate-400 whitespace-nowrap">{new Date(issue.created_at).toLocaleDateString()}</td>
-                                    </tr>
-                                ))}
-                                {issues.length === 0 && <tr><td colSpan={9} className="text-center py-10 text-slate-400">No issues found</td></tr>}
-                            </tbody>
-                        </table>
-                    </div>
+                    <>
+                        <FilterBar onFilter={handleFilter} showWardFilter={true} />
+                        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                            <table className="w-full text-sm">
+                                <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+                                    <tr>{['Ticket', 'Category', 'Ward', 'Severity', 'Status', 'Priority', 'Reporter', 'Worker', 'Created'].map(h => <th key={h} className="px-3 py-3 text-left font-semibold">{h}</th>)}</tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {issues.map(issue => (
+                                        <tr key={issue.id} className={issue.sla_breached ? 'bg-red-50' : ''}>
+                                            <td className="px-3 py-2.5 font-mono text-xs text-indigo-600 font-bold whitespace-nowrap">{issue.ticket_id}</td>
+                                            <td className="px-3 py-2.5 text-xs">{issue.category}</td>
+                                            <td className="px-3 py-2.5 text-xs text-slate-500">{issue.ward_name || '-'}</td>
+                                            <td className="px-3 py-2.5 text-xs">{issue.severity}</td>
+                                            <td className="px-3 py-2.5"><StatusBadge status={issue.status} /></td>
+                                            <td className="px-3 py-2.5 font-medium text-xs">{issue.priority_score}</td>
+                                            <td className="px-3 py-2.5 text-xs">{issue.reporter_name || '-'}</td>
+                                            <td className="px-3 py-2.5 text-xs">{issue.worker_name || <span className="text-orange-500">—</span>}</td>
+                                            <td className="px-3 py-2.5 text-xs text-slate-400 whitespace-nowrap">{new Date(issue.created_at).toLocaleDateString()}</td>
+                                        </tr>
+                                    ))}
+                                    {issues.length === 0 && <tr><td colSpan={9} className="text-center py-10 text-slate-400">No issues match filters</td></tr>}
+                                </tbody>
+                            </table>
+                        </div>
+                    </>
                 )}
 
                 {/* Analytics Tab */}
@@ -236,6 +253,22 @@ export default function AdminDashboard() {
                                     {slaMetrics.length === 0 && <tr><td colSpan={5} className="text-center py-4 text-slate-400">No data</td></tr>}
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                )}
+
+                {/* Map Tab */}
+                {tab === 'map' && (
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+                            <div>
+                                <h3 className="font-semibold text-slate-700 text-sm">City-wide Issue Heatmap</h3>
+                                <p className="text-xs text-slate-400 mt-0.5">🟢 Low priority &nbsp; 🟡 Medium &nbsp; 🟠 High &nbsp; 🔴 SLA Breached</p>
+                            </div>
+                            <span className="text-xs text-slate-500">{issues.length} issues plotted</span>
+                        </div>
+                        <div style={{ height: 520 }}>
+                            <IssueMap issues={issues} />
                         </div>
                     </div>
                 )}

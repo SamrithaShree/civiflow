@@ -5,6 +5,11 @@ const { autoAssignWorker } = require('../issues/issues.service');
  * Reassign a worker (supervisor/admin only).
  */
 const reassign = async ({ issueId, workerId, assignedBy, reason }) => {
+    // Get current status
+    const issueResult = await pool.query('SELECT status FROM issues WHERE id = $1', [issueId]);
+    if (issueResult.rows.length === 0) throw new Error('Issue not found');
+    const currentStatus = issueResult.rows[0].status;
+
     // Deactivate current assignment
     await pool.query('UPDATE assignments SET is_active = FALSE WHERE issue_id = $1 AND is_active = TRUE', [issueId]);
 
@@ -14,13 +19,15 @@ const reassign = async ({ issueId, workerId, assignedBy, reason }) => {
         [issueId, workerId, assignedBy, reason]
     );
 
-    // Update issue
-    await pool.query('UPDATE issues SET assigned_worker_id = $1, updated_at = NOW() WHERE id = $2', [workerId, issueId]);
+    // Update issue status to ASSIGNED for new or in-progress issues
+    const statusToSet = ['NEW', 'IN_PROGRESS', 'REOPENED'].includes(currentStatus) ? 'ASSIGNED' : currentStatus;
+
+    await pool.query('UPDATE issues SET assigned_worker_id = $1, status = $2, updated_at = NOW() WHERE id = $3', [workerId, statusToSet, issueId]);
 
     // Log in status history
     await pool.query(
-        `INSERT INTO status_history (issue_id, from_status, to_status, actor_id, actor_role, note) VALUES ($1, 'ASSIGNED', 'ASSIGNED', $2, 'SUPERVISOR', $3)`,
-        [issueId, assignedBy, `Reassigned to worker ${workerId}. Reason: ${reason}`]
+        `INSERT INTO status_history (issue_id, from_status, to_status, actor_id, actor_role, note) VALUES ($1, $2, $3, $4, 'SUPERVISOR', $5)`,
+        [issueId, currentStatus, statusToSet, assignedBy, `Reassigned to worker ${workerId}. Reason: ${reason}`]
     );
 
     return { success: true, message: 'Worker reassigned successfully' };

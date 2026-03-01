@@ -35,7 +35,13 @@ export const register = (data: object) => api.post('/auth/register', data);
 export const getMe = () => api.get('/auth/me');
 
 // Issues
-export const getIssues = (params?: object) => api.get('/issues', { params });
+export const getIssues = (params?: {
+    status?: string; category?: string; search?: string;
+    sla_breached?: boolean | string; ward_id?: number |
+    string;
+    page?: number; limit?: number;
+}) => api.get('/issues', { params });
+
 export const getIssue = (id: number) => api.get(`/issues/${id}`);
 export const createIssue = (data: FormData) => api.post('/issues', data, { headers: { 'Content-Type': 'multipart/form-data' } });
 export const updateStatus = (id: number, status: string, note?: string) => api.patch(`/issues/${id}/status`, { status, note });

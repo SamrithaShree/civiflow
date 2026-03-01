@@ -1,33 +1,63 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { getIssues, getEscalations, getWorkers, reassign } from '@/lib/api';
+import { getIssues, getEscalations, getWorkers, reassign, updateStatus } from '@/lib/api';
 import StatusBadge from '@/components/StatusBadge';
 import SLACountdown from '@/components/SLACountdown';
+import FilterBar from '@/components/FilterBar';
+import dynamic from 'next/dynamic';
+import type { ComponentType } from 'react';
+
+interface IssueMapProps { issues: any[] }
+const IssueMap = dynamic<IssueMapProps>(
+    () => import('@/components/IssueMap') as Promise<{ default: ComponentType<IssueMapProps> }>,
+    { ssr: false }
+);
+
+const FORCE_TRANSITIONS: Record<string, string[]> = {
+    NEW: ['IN_PROGRESS', 'CLOSED'],
+    ASSIGNED: ['IN_PROGRESS', 'CLOSED'],
+    IN_PROGRESS: ['CLOSED'],
+    REOPENED: ['ASSIGNED', 'IN_PROGRESS', 'CLOSED'],
+    PENDING_VERIFICATION: ['CLOSED', 'IN_PROGRESS'],
+};
 
 export default function SupervisorDashboard() {
     const router = useRouter();
     const [user, setUser] = useState<any>(null);
     const [issues, setIssues] = useState<any[]>([]);
+    const [total, setTotal] = useState(0);
     const [escalations, setEscalations] = useState<any[]>([]);
     const [workers, setWorkers] = useState<any[]>([]);
-    const [tab, setTab] = useState<'issues' | 'escalations' | 'workers'>('issues');
+    const [tab, setTab] = useState<'issues' | 'escalations' | 'workers' | 'map'>('issues');
     const [msg, setMsg] = useState('');
     const [reassignModal, setReassignModal] = useState<{ issueId: number } | null>(null);
     const [reassignData, setReassignData] = useState({ workerId: '', reason: '' });
+    const [forceStatus, setForceStatus] = useState<Record<number, string>>({});
+    const [filters, setFilters] = useState({});
 
     useEffect(() => {
         const u = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('civiflow_user') || 'null') : null;
         if (!u || u.role !== 'SUPERVISOR') { router.push('/login'); return; }
         setUser(u);
-        fetchAll();
+        fetchAll({});
     }, []);
 
-    const fetchAll = async () => {
-        const [issRes, escRes, wrkRes] = await Promise.all([getIssues(), getEscalations(), getWorkers()]);
+    const fetchAll = useCallback(async (params: any) => {
+        const [issRes, escRes, wrkRes] = await Promise.all([
+            getIssues(params),
+            getEscalations(),
+            getWorkers(),
+        ]);
         setIssues(issRes.data.issues || []);
+        setTotal(issRes.data.total || 0);
         setEscalations(escRes.data || []);
         setWorkers(wrkRes.data.workers || []);
+    }, []);
+
+    const handleFilter = (params: any) => {
+        setFilters(params);
+        fetchAll(params);
     };
 
     const handleReassign = async () => {
@@ -36,10 +66,18 @@ export default function SupervisorDashboard() {
             await reassign(reassignModal.issueId, parseInt(reassignData.workerId), reassignData.reason);
             setMsg('✅ Worker reassigned successfully');
             setReassignModal(null);
-            await fetchAll();
-        } catch (err: any) {
-            setMsg(err.response?.data?.error || 'Error');
-        }
+            fetchAll(filters);
+        } catch (err: any) { setMsg(err.response?.data?.error || 'Error'); }
+    };
+
+    const handleForceStatus = async (issueId: number, status: string) => {
+        if (!status) return;
+        try {
+            await updateStatus(issueId, status, '[Supervisor override]');
+            setMsg(`✅ Issue force-updated to ${status}`);
+            setForceStatus(prev => ({ ...prev, [issueId]: '' }));
+            fetchAll(filters);
+        } catch (err: any) { setMsg(err.response?.data?.error || 'Error'); }
     };
 
     const logout = () => { localStorage.clear(); router.push('/login'); };
@@ -62,7 +100,7 @@ export default function SupervisorDashboard() {
                 {/* Stats Row */}
                 <div className="grid grid-cols-4 gap-4 mb-6">
                     {[
-                        { label: 'Total Issues', value: issues.length, color: 'bg-indigo-600' },
+                        { label: 'Total Issues', value: total, color: 'bg-indigo-600' },
                         { label: 'SLA Breached', value: breached.length, color: 'bg-red-600' },
                         { label: 'Escalations', value: escalations.length, color: 'bg-orange-500' },
                         { label: 'Workers', value: workers.length, color: 'bg-teal-600' },
@@ -78,40 +116,66 @@ export default function SupervisorDashboard() {
 
                 {/* Tabs */}
                 <div className="flex gap-2 mb-5">
-                    {(['issues', 'escalations', 'workers'] as const).map(t => (
+                    {(['issues', 'escalations', 'workers', 'map'] as const).map(t => (
                         <button key={t} onClick={() => setTab(t)}
                             className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition ${tab === t ? 'bg-teal-700 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:border-teal-300'}`}>
-                            {t} {t === 'issues' ? `(${issues.length})` : t === 'escalations' ? `(${escalations.length})` : `(${workers.length})`}
+                            {t === 'map' ? '🗺️ Map' : t} {t === 'issues' ? `(${total})` : t === 'escalations' ? `(${escalations.length})` : t === 'workers' ? `(${workers.length})` : ''}
                         </button>
                     ))}
                 </div>
 
                 {/* Issues Tab */}
                 {tab === 'issues' && (
-                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                        <table className="w-full text-sm">
-                            <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
-                                <tr>{['Ticket', 'Category', 'Ward', 'Status', 'Priority', 'SLA', 'Worker', 'Action'].map(h => <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>)}</tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {issues.map(issue => (
-                                    <tr key={issue.id} className={issue.sla_breached ? 'bg-red-50' : ''}>
-                                        <td className="px-4 py-3 font-mono text-xs text-indigo-600 font-bold">{issue.ticket_id}</td>
-                                        <td className="px-4 py-3">{issue.category}</td>
-                                        <td className="px-4 py-3 text-xs text-slate-500">{issue.ward_name || '-'}</td>
-                                        <td className="px-4 py-3"><StatusBadge status={issue.status} /></td>
-                                        <td className="px-4 py-3 font-medium">{issue.priority_score}</td>
-                                        <td className="px-4 py-3">{issue.sla_deadline ? <SLACountdown deadline={issue.sla_deadline} /> : '-'}</td>
-                                        <td className="px-4 py-3 text-xs">{issue.worker_name || <span className="text-orange-500">Unassigned</span>}</td>
-                                        <td className="px-4 py-3">
-                                            <button onClick={() => { setReassignModal({ issueId: issue.id }); setReassignData({ workerId: '', reason: '' }); }}
-                                                className="text-xs bg-teal-100 text-teal-700 hover:bg-teal-200 px-2.5 py-1 rounded-lg font-medium transition">Reassign</button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
+                    <>
+                        <FilterBar onFilter={handleFilter} />
+                        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                            <table className="w-full text-sm">
+                                <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+                                    <tr>{['Ticket', 'Category', 'Ward', 'Status', 'Priority', 'SLA', 'Worker', 'Override', 'Action'].map(h => <th key={h} className="px-3 py-3 text-left font-semibold">{h}</th>)}</tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {issues.map(issue => (
+                                        <tr key={issue.id} className={issue.sla_breached ? 'bg-red-50' : ''}>
+                                            <td className="px-3 py-2.5 font-mono text-xs text-indigo-600 font-bold">{issue.ticket_id}</td>
+                                            <td className="px-3 py-2.5 text-xs">{issue.category}</td>
+                                            <td className="px-3 py-2.5 text-xs text-slate-500">{issue.ward_name || '-'}</td>
+                                            <td className="px-3 py-2.5"><StatusBadge status={issue.status} /></td>
+                                            <td className="px-3 py-2.5 font-medium">{issue.priority_score}</td>
+                                            <td className="px-3 py-2.5">{issue.sla_deadline ? <SLACountdown deadline={issue.sla_deadline} /> : '-'}</td>
+                                            <td className="px-3 py-2.5 text-xs">{issue.worker_name || <span className="text-orange-500">Unassigned</span>}</td>
+                                            {/* Force Status Override */}
+                                            <td className="px-3 py-2.5">
+                                                {FORCE_TRANSITIONS[issue.status] && (
+                                                    <div className="flex items-center gap-1">
+                                                        <select
+                                                            value={forceStatus[issue.id] || ''}
+                                                            onChange={e => setForceStatus(prev => ({ ...prev, [issue.id]: e.target.value }))}
+                                                            className="border border-slate-300 rounded px-1.5 py-1 text-xs focus:outline-none focus:border-teal-500">
+                                                            <option value="">Force…</option>
+                                                            {FORCE_TRANSITIONS[issue.status].map(s => <option key={s} value={s}>{s}</option>)}
+                                                        </select>
+                                                        {forceStatus[issue.id] && (
+                                                            <button onClick={() => handleForceStatus(issue.id, forceStatus[issue.id])}
+                                                                className="text-xs bg-orange-500 hover:bg-orange-400 text-white px-1.5 py-1 rounded font-medium transition">
+                                                                Apply
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </td>
+                                            <td className="px-3 py-2.5">
+                                                <button onClick={() => { setReassignModal({ issueId: issue.id }); setReassignData({ workerId: '', reason: '' }); }}
+                                                    className="text-xs bg-teal-100 text-teal-700 hover:bg-teal-200 px-2.5 py-1 rounded-lg font-medium transition">Reassign</button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {issues.length === 0 && (
+                                        <tr><td colSpan={9} className="text-center py-10 text-slate-400">No issues match filters</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </>
                 )}
 
                 {/* Escalations Tab */}
@@ -126,14 +190,18 @@ export default function SupervisorDashboard() {
                                     <tr key={e.id}>
                                         <td className="px-4 py-3 font-mono text-xs text-indigo-600 font-bold">{e.ticket_id}</td>
                                         <td className="px-4 py-3">{e.category}</td>
-                                        <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${e.escalated_to === 'ADMIN' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'}`}>{e.escalated_to}</span></td>
-                                        <td className="px-4 py-3 text-center">{e.level}</td>
+                                        <td className="px-4 py-3">
+                                            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${e.escalated_to === 'ADMIN' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'}`}>
+                                                {e.escalated_to}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-3 text-center font-semibold">{e.level}</td>
                                         <td className="px-4 py-3 text-red-600 font-medium">{Number(e.hours_overdue).toFixed(1)}h</td>
                                         <td className="px-4 py-3 text-xs text-slate-500 max-w-xs truncate">{e.reason}</td>
                                         <td className="px-4 py-3 text-xs text-slate-400">{new Date(e.created_at).toLocaleDateString()}</td>
                                     </tr>
                                 ))}
-                                {escalations.length === 0 && <tr><td colSpan={7} className="text-center py-8 text-slate-400">No escalations</td></tr>}
+                                {escalations.length === 0 && <tr><td colSpan={7} className="text-center py-8 text-slate-400">No escalations 🎉</td></tr>}
                             </tbody>
                         </table>
                     </div>
@@ -161,6 +229,19 @@ export default function SupervisorDashboard() {
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+                )}
+
+                {/* Map Tab */}
+                {tab === 'map' && (
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div className="p-4 border-b border-slate-100">
+                            <h3 className="font-semibold text-slate-700 text-sm">Issue Heatmap – Your Department</h3>
+                            <p className="text-xs text-slate-400 mt-0.5">Circle size = priority score. Red = SLA breached.</p>
+                        </div>
+                        <div style={{ height: 480 }}>
+                            <IssueMap issues={issues} />
+                        </div>
                     </div>
                 )}
             </div>
