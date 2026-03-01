@@ -66,7 +66,7 @@ const createIssue = async ({ category, description, lat, lng, severity, reporter
             }
 
             await client.query('COMMIT');
-            return { isDuplicate: true, parentIssueId: duplicate.id, ticketId: duplicate.ticket_id };
+            return { duplicate: true, parentIssueId: duplicate.id };
         }
 
         // 4. Find department by category + ward
@@ -119,7 +119,7 @@ const createIssue = async ({ category, description, lat, lng, severity, reporter
         await autoAssignWorker(issue.id, departmentId, issue.ward_id);
 
         const fresh = await getIssueById(issue.id);
-        return { isDuplicate: false, issue: fresh };
+        return { duplicate: false, issue: fresh };
     } catch (err) {
         await client.query('ROLLBACK');
         throw err;

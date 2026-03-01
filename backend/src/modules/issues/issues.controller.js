@@ -40,12 +40,11 @@ const create = async (req, res) => {
             return res.status(200).json({ message: 'Issue already created', issue: result.issue });
         }
 
-        if (result.isDuplicate) {
+        if (result.duplicate) {
             return res.status(200).json({
                 message: 'Duplicate detected. Your report has been attached to existing issue.',
-                isDuplicate: true,
-                parentIssueId: result.parentIssueId,
-                ticketId: result.ticketId,
+                duplicate: true,
+                parentIssueId: result.parentIssueId
             });
         }
         res.status(201).json({ message: 'Issue created successfully', issue: result.issue });

@@ -27,7 +27,7 @@ const detectDuplicate = async (lat, lng, category, incidentMode = false) => {
     FROM issues
     WHERE
       category = $3
-      AND status NOT IN ('CLOSED', 'REOPENED')
+      AND status NOT IN ('CLOSED')
       AND created_at > NOW() - INTERVAL '${timeWindowHours} hours'
       AND parent_issue_id IS NULL
       AND (
