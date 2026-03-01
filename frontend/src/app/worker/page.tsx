@@ -1,10 +1,13 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { getIssues, updateStatus, uploadMedia, getIssue } from '@/lib/api';
+import { getMyAssignments, updateStatus, uploadMedia, getIssues, getIssue } from '@/lib/api';
 import StatusBadge from '@/components/StatusBadge';
 import SLACountdown from '@/components/SLACountdown';
 import Timeline from '@/components/Timeline';
+import dynamic from 'next/dynamic';
+
+const IssueMap = dynamic(() => import('@/components/IssueMap'), { ssr: false });
 
 export default function WorkerDashboard() {
     const router = useRouter();
@@ -128,6 +131,13 @@ export default function WorkerDashboard() {
                                         <SLACountdown deadline={selected.sla_deadline} />
                                     </div>
                                 )}
+
+                                <div>
+                                    <h3 className="font-semibold text-slate-700 mb-2 text-sm">Location</h3>
+                                    <div className="h-48 border border-slate-200 rounded-lg overflow-hidden relative z-0" key={`map-${selected.id}`}>
+                                        <IssueMap key={selected.id} issues={[selected]} />
+                                    </div>
+                                </div>
 
                                 {/* Action Buttons */}
                                 <div className="border-t border-slate-100 pt-4 space-y-3">

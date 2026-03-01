@@ -4,6 +4,10 @@ import { useRouter } from 'next/navigation';
 import { getIssues, createIssue, getIssue, verifyResolution } from '@/lib/api';
 import StatusBadge from '@/components/StatusBadge';
 import Timeline from '@/components/Timeline';
+import dynamic from 'next/dynamic';
+
+const LocationPicker = dynamic(() => import('@/components/LocationPicker'), { ssr: false });
+const IssueMap = dynamic(() => import('@/components/IssueMap'), { ssr: false });
 
 const CATEGORIES = ['ROAD', 'WATER', 'SANITATION', 'ELECTRICITY', 'DRAINAGE', 'PARK', 'STREETLIGHT', 'NOISE', 'OTHER'];
 const SEVERITIES = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
@@ -18,10 +22,12 @@ export default function CitizenDashboard() {
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState('');
     const [form, setForm] = useState({ category: 'ROAD', description: '', lat: '12.9716', lng: '77.5946', severity: 'MEDIUM' });
+    const [idempotencyKey, setIdempotencyKey] = useState('');
     const [photo, setPhoto] = useState<File | null>(null);
     const [verifyReason, setVerifyReason] = useState('');
 
     useEffect(() => {
+        setIdempotencyKey(crypto.randomUUID());
         const u = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('civiflow_user') || 'null') : null;
         if (!u || u.role !== 'CITIZEN') { router.push('/login'); return; }
         setUser(u);
@@ -50,13 +56,22 @@ export default function CitizenDashboard() {
         try {
             const fd = new FormData();
             Object.entries(form).forEach(([k, v]) => fd.append(k, v));
+            fd.append('idempotencyKey', idempotencyKey);
             if (photo) fd.append('photos', photo);
             const res = await createIssue(fd);
+
             if (res.data.isDuplicate) {
                 setMsg(`Your report was merged with ticket ${res.data.ticketId}. Your report boosts its priority.`);
+            } else if (res.data.message === 'Issue already created') {
+                setMsg(`✅ Issue submitted! Ticket ID: ${res.data.issue.ticket_id}`);
             } else {
                 setMsg(`✅ Issue submitted! Ticket ID: ${res.data.issue.ticket_id}`);
             }
+            // Generate a fresh idempotency key for the next report
+            setIdempotencyKey(crypto.randomUUID());
+            setForm({ category: 'ROAD', description: '', lat: '12.9716', lng: '77.5946', severity: 'MEDIUM' });
+            setPhoto(null);
+
             await fetchIssues();
             setView('list');
         } catch (err: any) {
@@ -154,17 +169,9 @@ export default function CitizenDashboard() {
                                     className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:border-indigo-500 resize-none"
                                     placeholder="Describe the issue in detail…" />
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 mb-1">Latitude *</label>
-                                    <input type="number" step="any" required value={form.lat} onChange={e => setForm(f => ({ ...f, lat: e.target.value }))}
-                                        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" placeholder="e.g. 12.9716" />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 mb-1">Longitude *</label>
-                                    <input type="number" step="any" required value={form.lng} onChange={e => setForm(f => ({ ...f, lng: e.target.value }))}
-                                        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" placeholder="e.g. 77.5946" />
-                                </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Location Pin *</label>
+                                <LocationPicker lat={form.lat} lng={form.lng} onChange={(lat, lng) => setForm(f => ({ ...f, lat, lng }))} />
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-1">Photo (optional)</label>
@@ -200,6 +207,13 @@ export default function CitizenDashboard() {
                             {selectedIssue.worker_name && (
                                 <p className="text-sm text-slate-600 mb-4">👷 Assigned Worker: <strong>{selectedIssue.worker_name}</strong></p>
                             )}
+
+                            <div className="mb-4">
+                                <h3 className="font-semibold text-slate-700 mb-2 text-sm">Issue Location</h3>
+                                <div className="h-48 border border-slate-200 rounded-lg overflow-hidden relative z-0" key={`map-${selectedIssue.id}`}>
+                                    <IssueMap key={selectedIssue.id} issues={[selectedIssue]} />
+                                </div>
+                            </div>
 
                             {/* Verification Controls */}
                             {selectedIssue.status === 'PENDING_VERIFICATION' && (

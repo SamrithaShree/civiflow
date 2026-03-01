@@ -267,8 +267,8 @@ export default function AdminDashboard() {
                             </div>
                             <span className="text-xs text-slate-500">{issues.length} issues plotted</span>
                         </div>
-                        <div style={{ height: 520 }}>
-                            <IssueMap issues={issues} />
+                        <div style={{ height: 520 }} key={`map-${issues.length}`}>
+                            <IssueMap key={`map-${issues.length}`} issues={issues} />
                         </div>
                     </div>
                 )}

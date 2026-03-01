@@ -47,18 +47,28 @@ const runSLACheck = async () => {
 
             // Level 1: Escalate to Supervisor
             if (parseInt(issue.l1_count) === 0) {
+                const reason = `SLA breached by ${hoursOverdue.toFixed(1)} hours. Issue: ${issue.ticket_id}`;
                 await pool.query(
                     `INSERT INTO escalations (issue_id, escalated_to, level, reason, hours_overdue) VALUES ($1, 'SUPERVISOR', 1, $2, $3)`,
-                    [issue.id, `SLA breached by ${hoursOverdue.toFixed(1)} hours. Issue: ${issue.ticket_id}`, hoursOverdue]
+                    [issue.id, reason, hoursOverdue]
+                );
+                await pool.query(
+                    `INSERT INTO status_history (issue_id, from_status, to_status, actor_id, actor_role, note) VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [issue.id, issue.status, issue.status, null, 'SYSTEM', `L1 Escalation: ${reason}`]
                 );
                 console.log(`[SLAWorker] L1 Escalation: ${issue.ticket_id} → SUPERVISOR (${hoursOverdue.toFixed(1)}h)`);
             }
 
             // Level 2: 24h+ past SLA → escalate to Admin
             if (hoursOverdue >= ESCALATION_LEVELS.LEVEL_2.hoursOverSLA + 24 && parseInt(issue.l2_count) === 0) {
+                const reason = `Critical SLA breach: ${hoursOverdue.toFixed(1)}h overdue. Escalated to Admin.`;
                 await pool.query(
                     `INSERT INTO escalations (issue_id, escalated_to, level, reason, hours_overdue) VALUES ($1, 'ADMIN', 2, $2, $3)`,
-                    [issue.id, `Critical SLA breach: ${hoursOverdue.toFixed(1)}h overdue. Escalated to Admin.`, hoursOverdue]
+                    [issue.id, reason, hoursOverdue]
+                );
+                await pool.query(
+                    `INSERT INTO status_history (issue_id, from_status, to_status, actor_id, actor_role, note) VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [issue.id, issue.status, issue.status, null, 'SYSTEM', `L2 Escalation: ${reason}`]
                 );
                 console.log(`[SLAWorker] L2 Escalation: ${issue.ticket_id} → ADMIN (${hoursOverdue.toFixed(1)}h)`);
             }

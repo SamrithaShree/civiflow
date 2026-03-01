@@ -239,8 +239,8 @@ export default function SupervisorDashboard() {
                             <h3 className="font-semibold text-slate-700 text-sm">Issue Heatmap – Your Department</h3>
                             <p className="text-xs text-slate-400 mt-0.5">Circle size = priority score. Red = SLA breached.</p>
                         </div>
-                        <div style={{ height: 480 }}>
-                            <IssueMap issues={issues} />
+                        <div style={{ height: 480 }} key={`map-${issues.length}`}>
+                            <IssueMap key={`map-${issues.length}`} issues={issues} />
                         </div>
                     </div>
                 )}

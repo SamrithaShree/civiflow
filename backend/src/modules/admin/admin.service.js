@@ -1,10 +1,12 @@
 const pool = require('../../config/db');
 const { PRIORITY } = require('../../config/constants');
+const { calculatePriority } = require('../../utils/priority');
 
 /**
  * Toggle incident mode on or off.
  */
 const toggleIncidentMode = async (userId, activate, reason) => {
+    let resultRow;
     if (activate) {
         await pool.query(`UPDATE incident_modes SET active = FALSE, ended_at = NOW() WHERE active = TRUE`);
         const result = await pool.query(
@@ -12,12 +14,36 @@ const toggleIncidentMode = async (userId, activate, reason) => {
             [userId, reason || 'Incident mode activated by admin']
         );
         console.log('[AdminService] Incident mode ACTIVATED');
-        return result.rows[0];
+        resultRow = result.rows[0];
     } else {
         await pool.query(`UPDATE incident_modes SET active = FALSE, ended_at = NOW() WHERE active = TRUE`);
         console.log('[AdminService] Incident mode DEACTIVATED');
-        return { active: false, ended_at: new Date() };
+        resultRow = { active: false, ended_at: new Date() };
     }
+
+    // Background job: instantly recalculate priority for all active issues
+    setImmediate(async () => {
+        try {
+            console.log(`[AdminService] Recalculating all priorities. Incident mode: ${activate}`);
+            const issuesRes = await pool.query(`SELECT id, category, severity, status, created_at, reopen_count FROM issues WHERE status NOT IN ('CLOSED')`);
+            for (const issue of issuesRes.rows) {
+                const ageInDays = (Date.now() - new Date(issue.created_at).getTime()) / (1000 * 60 * 60 * 24);
+                const score = calculatePriority({
+                    category: issue.category,
+                    severity: issue.severity,
+                    ageInDays,
+                    isReopened: issue.reopen_count > 0,
+                    incidentMode: activate
+                });
+                await pool.query('UPDATE issues SET priority_score = $1 WHERE id = $2', [score, issue.id]);
+            }
+            console.log(`[AdminService] Successfully recalculated ${issuesRes.rowCount} active queues.`);
+        } catch (err) {
+            console.error('[AdminService] Fallback priority recalculation failed:', err);
+        }
+    });
+
+    return resultRow;
 };
 
 const getIncidentMode = async () => {

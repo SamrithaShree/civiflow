@@ -1,14 +1,45 @@
 const issuesService = require('./issues.service');
+const { CATEGORIES } = require('../../config/constants');
 const path = require('path');
 
 const create = async (req, res) => {
     try {
+        const { category, description, lat, lng, severity } = req.body;
+
+        // 1. Strict Validation
+        if (!category || !CATEGORIES[category]) {
+            throw new Error(`Invalid category. Must be one of: ${Object.keys(CATEGORIES).join(', ')}`);
+        }
+        if (!description || description.trim().length < 10 || description.trim().length > 2000) {
+            throw new Error('Description must be between 10 and 2000 characters');
+        }
+        if (lat !== undefined && lng !== undefined) {
+            const parsedLat = parseFloat(lat);
+            const parsedLng = parseFloat(lng);
+            if (isNaN(parsedLat) || isNaN(parsedLng) || parsedLat < -90 || parsedLat > 90 || parsedLng < -180 || parsedLng > 180) {
+                throw new Error('Invalid coordinates. Lat must be -90 to 90, Lng must be -180 to 180.');
+            }
+        }
+
+        // 2. Idempotency Key (from header or body)
+        const idempotencyKey = req.headers['x-idempotency-key'] || req.body.idempotencyKey || null;
+
         const photoUrls = req.files ? req.files.map(f => `/uploads/${f.filename}`) : [];
         const result = await issuesService.createIssue({
-            ...req.body,
+            category,
+            description: description.trim(),
+            lat: lat ? parseFloat(lat) : null,
+            lng: lng ? parseFloat(lng) : null,
+            severity: severity || 'MEDIUM',
             reporterId: req.user.id,
             photoUrls,
+            idempotencyKey
         });
+
+        if (result.isIdempotentReplay) {
+            return res.status(200).json({ message: 'Issue already created', issue: result.issue });
+        }
+
         if (result.isDuplicate) {
             return res.status(200).json({
                 message: 'Duplicate detected. Your report has been attached to existing issue.',
