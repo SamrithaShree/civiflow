@@ -1,0 +1,270 @@
+'use client';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { getIssues, getOverview, getWardStats, getSLAMetrics, getDeptPerformance, getIncidentMode, toggleIncidentMode, getAllUsers } from '@/lib/api';
+import StatusBadge from '@/components/StatusBadge';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
+
+const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6'];
+
+export default function AdminDashboard() {
+    const router = useRouter();
+    const [user, setUser] = useState<any>(null);
+    const [overview, setOverview] = useState<any>(null);
+    const [wardStats, setWardStats] = useState<any[]>([]);
+    const [slaMetrics, setSlaMetrics] = useState<any[]>([]);
+    const [deptPerf, setDeptPerf] = useState<any[]>([]);
+    const [issues, setIssues] = useState<any[]>([]);
+    const [incident, setIncident] = useState<any>(null);
+    const [users, setUsers] = useState<any[]>([]);
+    const [tab, setTab] = useState<'overview' | 'issues' | 'users' | 'analytics'>('overview');
+    const [msg, setMsg] = useState('');
+
+    useEffect(() => {
+        const u = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('civiflow_user') || 'null') : null;
+        if (!u || u.role !== 'ADMIN') { router.push('/login'); return; }
+        setUser(u);
+        fetchAll();
+    }, []);
+
+    const fetchAll = async () => {
+        try {
+            const [ovRes, wdRes, slRes, dpRes, isRes, inRes, urRes] = await Promise.all([
+                getOverview(), getWardStats(), getSLAMetrics(), getDeptPerformance(), getIssues(), getIncidentMode(), getAllUsers()
+            ]);
+            setOverview(ovRes.data);
+            setWardStats(wdRes.data || []);
+            setSlaMetrics(slRes.data || []);
+            setDeptPerf(dpRes.data || []);
+            setIssues(isRes.data?.issues || []);
+            setIncident(inRes.data);
+            setUsers(urRes.data || []);
+        } catch (err: any) {
+            setMsg('Failed to load some data: ' + (err.response?.data?.error || err.message));
+        }
+    };
+
+    const handleIncidentToggle = async () => {
+        const activate = !incident?.active;
+        try {
+            await toggleIncidentMode(activate, activate ? 'Emergency mode activated by admin' : 'Emergency mode deactivated');
+            setMsg(activate ? '🚨 Incident Mode ACTIVATED — priority weights doubled, SLA tightened.' : '✅ Incident Mode deactivated.');
+            await fetchAll();
+        } catch (err: any) { setMsg(err.response?.data?.error || 'Error'); }
+    };
+
+    const logout = () => { localStorage.clear(); router.push('/login'); };
+
+    const pieData = overview ? [
+        { name: 'New', value: parseInt(overview.new_count) },
+        { name: 'In Progress', value: parseInt(overview.in_progress_count) },
+        { name: 'Resolved', value: parseInt(overview.resolved_count) },
+        { name: 'Closed', value: parseInt(overview.closed_count) },
+        { name: 'Reopened', value: parseInt(overview.reopened_count) },
+    ].filter(d => d.value > 0) : [];
+
+    return (
+        <div className="min-h-screen bg-slate-50">
+            <nav className="bg-slate-900 text-white px-6 py-3 flex items-center justify-between shadow">
+                <div className="flex items-center gap-3">
+                    <span className="text-xl font-bold">🏛 CiviFlow</span>
+                    <span className="bg-slate-700 text-xs rounded-full px-2 py-0.5">Admin</span>
+                    {incident?.active && <span className="bg-red-600 text-xs rounded-full px-2 py-0.5 animate-pulse">🚨 INCIDENT MODE</span>}
+                </div>
+                <div className="flex items-center gap-3">
+                    <span className="text-sm opacity-70">⚙️ {user?.name}</span>
+                    <button onClick={logout} className="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg transition">Logout</button>
+                </div>
+            </nav>
+
+            <div className="max-w-7xl mx-auto px-4 py-8">
+                {msg && <div className="bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl px-4 py-3 mb-4 text-sm">{msg}</div>}
+
+                {/* Incident Mode Banner */}
+                <div className={`rounded-xl p-4 mb-6 flex items-center justify-between ${incident?.active ? 'bg-red-50 border border-red-300' : 'bg-slate-100 border border-slate-200'}`}>
+                    <div>
+                        <span className="font-semibold text-sm">{incident?.active ? '🚨 Incident Mode is ACTIVE' : '🔵 Incident Mode: Inactive'}</span>
+                        {incident?.active && <p className="text-xs text-red-600 mt-0.5">Priority weights ×1.5 • Expanded duplicate radius • Emergency queue active</p>}
+                        {!incident?.active && <p className="text-xs text-slate-500 mt-0.5">Activate to increase response urgency city-wide</p>}
+                    </div>
+                    <button onClick={handleIncidentToggle}
+                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${incident?.active ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white'}`}>
+                        {incident?.active ? 'Deactivate' : '🚨 Activate Incident Mode'}
+                    </button>
+                </div>
+
+                {/* KPI Cards */}
+                {overview && (
+                    <div className="grid grid-cols-4 gap-4 mb-6">
+                        {[
+                            { label: 'Total Issues', value: overview.total, color: 'text-indigo-600' },
+                            { label: 'Open Issues', value: parseInt(overview.total) - parseInt(overview.closed_count), color: 'text-yellow-600' },
+                            { label: 'Closed', value: overview.closed_count, color: 'text-green-600' },
+                            { label: 'SLA Breached', value: overview.sla_breached, color: 'text-red-600' },
+                        ].map(k => (
+                            <div key={k.label} className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm text-center">
+                                <div className={`text-3xl font-bold mb-1 ${k.color}`}>{k.value}</div>
+                                <div className="text-xs text-slate-500">{k.label}</div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Tabs */}
+                <div className="flex gap-2 mb-5">
+                    {(['overview', 'issues', 'analytics', 'users'] as const).map(t => (
+                        <button key={t} onClick={() => setTab(t)}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition ${tab === t ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-400'}`}>
+                            {t}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Overview Tab */}
+                {tab === 'overview' && (
+                    <div className="grid grid-cols-2 gap-6">
+                        {/* Pie */}
+                        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                            <h3 className="font-semibold text-slate-700 mb-4 text-sm">Issue Status Distribution</h3>
+                            <ResponsiveContainer width="100%" height={220}>
+                                <PieChart>
+                                    <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>
+                                        {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                                    </Pie>
+                                    <Legend />
+                                    <Tooltip />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        </div>
+                        {/* Ward Bar */}
+                        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                            <h3 className="font-semibold text-slate-700 mb-4 text-sm">Issues by Ward</h3>
+                            <ResponsiveContainer width="100%" height={220}>
+                                <BarChart data={wardStats} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
+                                    <XAxis dataKey="ward_name" tick={{ fontSize: 10 }} />
+                                    <YAxis tick={{ fontSize: 10 }} />
+                                    <Tooltip />
+                                    <Bar dataKey="total_issues" fill="#6366f1" radius={4} />
+                                    <Bar dataKey="sla_breached" fill="#ef4444" radius={4} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+
+                        {/* Department Performance */}
+                        <div className="col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                            <div className="px-5 py-4 border-b border-slate-100">
+                                <h3 className="font-semibold text-slate-700 text-sm">Department Performance</h3>
+                            </div>
+                            <table className="w-full text-sm">
+                                <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+                                    <tr>{['Department', 'Total', 'Closed', 'SLA Breached', 'Avg Closure (h)'].map(h => <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>)}</tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {deptPerf.map((d: any) => (
+                                        <tr key={d.id}>
+                                            <td className="px-4 py-3 font-medium">{d.department_name}</td>
+                                            <td className="px-4 py-3">{d.total_issues}</td>
+                                            <td className="px-4 py-3 text-green-600">{d.closed}</td>
+                                            <td className="px-4 py-3 text-red-600">{d.sla_breached}</td>
+                                            <td className="px-4 py-3">{d.avg_closure_hours ?? '-'}</td>
+                                        </tr>
+                                    ))}
+                                    {deptPerf.length === 0 && <tr><td colSpan={5} className="text-center py-6 text-slate-400 text-sm">No data</td></tr>}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+
+                {/* All Issues Tab */}
+                {tab === 'issues' && (
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                        <table className="w-full text-sm">
+                            <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+                                <tr>{['Ticket', 'Category', 'Ward', 'Severity', 'Status', 'Priority', 'Reporter', 'Worker', 'Created'].map(h => <th key={h} className="px-3 py-3 text-left font-semibold">{h}</th>)}</tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {issues.map(issue => (
+                                    <tr key={issue.id} className={issue.sla_breached ? 'bg-red-50' : ''}>
+                                        <td className="px-3 py-2.5 font-mono text-xs text-indigo-600 font-bold whitespace-nowrap">{issue.ticket_id}</td>
+                                        <td className="px-3 py-2.5 text-xs">{issue.category}</td>
+                                        <td className="px-3 py-2.5 text-xs text-slate-500">{issue.ward_name || '-'}</td>
+                                        <td className="px-3 py-2.5"><span className="text-xs">{issue.severity}</span></td>
+                                        <td className="px-3 py-2.5"><StatusBadge status={issue.status} /></td>
+                                        <td className="px-3 py-2.5 font-medium text-xs">{issue.priority_score}</td>
+                                        <td className="px-3 py-2.5 text-xs">{issue.reporter_name || '-'}</td>
+                                        <td className="px-3 py-2.5 text-xs">{issue.worker_name || <span className="text-orange-500">—</span>}</td>
+                                        <td className="px-3 py-2.5 text-xs text-slate-400 whitespace-nowrap">{new Date(issue.created_at).toLocaleDateString()}</td>
+                                    </tr>
+                                ))}
+                                {issues.length === 0 && <tr><td colSpan={9} className="text-center py-10 text-slate-400">No issues found</td></tr>}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+
+                {/* Analytics Tab */}
+                {tab === 'analytics' && (
+                    <div className="grid grid-cols-2 gap-6">
+                        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                            <h3 className="font-semibold text-slate-700 mb-4 text-sm">SLA Metrics by Category</h3>
+                            <ResponsiveContainer width="100%" height={240}>
+                                <BarChart data={slaMetrics} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
+                                    <XAxis dataKey="category" tick={{ fontSize: 9 }} />
+                                    <YAxis tick={{ fontSize: 10 }} />
+                                    <Tooltip />
+                                    <Bar dataKey="total" fill="#6366f1" radius={4} name="Total" />
+                                    <Bar dataKey="breached" fill="#ef4444" radius={4} name="Breached" />
+                                    <Legend />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                            <h3 className="font-semibold text-slate-700 mb-4 text-sm">SLA Compliance by Category</h3>
+                            <table className="w-full text-sm">
+                                <thead className="text-xs text-slate-500 uppercase"><tr>{['Category', 'Total', 'Breached', 'Within SLA', 'Avg Hrs'].map(h => <th key={h} className="py-2 text-left font-semibold">{h}</th>)}</tr></thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {slaMetrics.map((m: any) => (
+                                        <tr key={m.category}>
+                                            <td className="py-2 font-medium">{m.category}</td>
+                                            <td className="py-2">{m.total}</td>
+                                            <td className="py-2 text-red-600">{m.breached}</td>
+                                            <td className="py-2 text-green-600">{m.resolved_within_sla}</td>
+                                            <td className="py-2">{m.avg_resolution_hours ?? '-'}</td>
+                                        </tr>
+                                    ))}
+                                    {slaMetrics.length === 0 && <tr><td colSpan={5} className="text-center py-4 text-slate-400">No data</td></tr>}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+
+                {/* Users Tab */}
+                {tab === 'users' && (
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                        <table className="w-full text-sm">
+                            <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+                                <tr>{['Name', 'Email', 'Role', 'Ward', 'Phone', 'Joined'].map(h => <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>)}</tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {users.map((u: any) => (
+                                    <tr key={u.id}>
+                                        <td className="px-4 py-3 font-medium">{u.name}</td>
+                                        <td className="px-4 py-3 text-xs text-slate-500">{u.email}</td>
+                                        <td className="px-4 py-3">
+                                            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${u.role === 'ADMIN' ? 'bg-slate-800 text-white' : u.role === 'SUPERVISOR' ? 'bg-teal-100 text-teal-700' : u.role === 'WORKER' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'}`}>{u.role}</span>
+                                        </td>
+                                        <td className="px-4 py-3 text-xs">{u.ward_id || '-'}</td>
+                                        <td className="px-4 py-3 text-xs">{u.phone || '-'}</td>
+                                        <td className="px-4 py-3 text-xs text-slate-400">{new Date(u.created_at).toLocaleDateString()}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
