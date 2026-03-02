@@ -14,7 +14,7 @@ const detectDuplicate = async (lat, lng, category, incidentMode = false) => {
   // Using Haversine formula approximation in SQL (PostgreSQL)
   // 111320 meters per degree latitude
   const query = `
-    SELECT id, ticket_id, status, priority_score,
+    SELECT id, ticket_id, status, priority_score, reporter_id,
       (
         6371000 * acos(
           least(1.0, greatest(-1.0, 

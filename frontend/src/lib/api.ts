@@ -69,5 +69,7 @@ export const getIncidentMode = () => api.get('/admin/incident-mode');
 export const getAllUsers = (role?: string) => api.get('/admin/users', { params: role ? { role } : {} });
 export const getDepartments = () => api.get('/wards/departments');
 export const getWards = () => api.get('/wards');
+export const getNearestWard = (lat: number, lng: number) =>
+    api.get('/wards/nearest', { params: { lat, lng } });
 
 export default api;

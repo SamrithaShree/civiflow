@@ -41,8 +41,16 @@ const create = async (req, res) => {
         }
 
         if (result.duplicate) {
+            if (result.selfDuplicate) {
+                return res.status(200).json({
+                    message: 'You have already reported this issue. Your report is being tracked.',
+                    duplicate: true,
+                    selfDuplicate: true,
+                    parentIssueId: result.parentIssueId
+                });
+            }
             return res.status(200).json({
-                message: 'Duplicate detected. Your report has been attached to existing issue.',
+                message: 'Duplicate detected. Your report has been attached to existing issue and its priority has been boosted.',
                 duplicate: true,
                 parentIssueId: result.parentIssueId
             });

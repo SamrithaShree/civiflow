@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { getIssues, createIssue, getIssue, verifyResolution } from '@/lib/api';
+import { getIssues, createIssue, getIssue, verifyResolution, getNearestWard } from '@/lib/api';
 import StatusBadge from '@/components/StatusBadge';
 import Timeline from '@/components/Timeline';
 import dynamic from 'next/dynamic';
@@ -21,10 +21,12 @@ export default function CitizenDashboard() {
     const [selectedIssue, setSelectedIssue] = useState<any>(null);
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState('');
-    const [form, setForm] = useState({ category: 'ROAD', description: '', lat: '12.9716', lng: '77.5946', severity: 'MEDIUM' });
+    // Default pin: Chennai city center (Anna Nagar area)
+    const [form, setForm] = useState({ category: 'ROAD', description: '', lat: '13.0827', lng: '80.2707', severity: 'MEDIUM' });
     const [idempotencyKey, setIdempotencyKey] = useState('');
     const [photo, setPhoto] = useState<File | null>(null);
     const [verifyReason, setVerifyReason] = useState('');
+    const [detectedWard, setDetectedWard] = useState<string | null>(null);
 
     useEffect(() => {
         setIdempotencyKey(crypto.randomUUID());
@@ -32,6 +34,8 @@ export default function CitizenDashboard() {
         if (!u || u.role !== 'CITIZEN') { router.push('/login'); return; }
         setUser(u);
         fetchIssues();
+        // Detect ward for default Chennai pin
+        getNearestWard(13.0827, 80.2707).then(r => setDetectedWard(r.data.ward?.name || null)).catch(() => { });
     }, []);
 
     const fetchIssues = async () => {
@@ -60,13 +64,17 @@ export default function CitizenDashboard() {
             if (photo) fd.append('photos', photo);
             const res = await createIssue(fd);
 
-            if (res.data.isDuplicate) {
-                setMsg(`Your report was merged with ticket ${res.data.ticketId}. Your report boosts its priority.`);
-            } else if (res.data.message === 'Issue already created') {
-                setMsg(`✅ Issue submitted! Ticket ID: ${res.data.issue.ticket_id}`);
+            if (res.data.selfDuplicate) {
+                // Same citizen re-reporting their own existing issue
+                setMsg(`ℹ️ You've already reported this issue. We're tracking it — no need to report again!`);
+            } else if (res.data.duplicate) {
+                // Different citizen corroborating an existing issue — priority boosted
+                setMsg(`📢 This issue was already reported by someone else. Your report has boosted its priority!`);
             } else {
+                // Brand new issue
                 setMsg(`✅ Issue submitted! Ticket ID: ${res.data.issue.ticket_id}`);
             }
+
             // Generate a fresh idempotency key for the next report
             setIdempotencyKey(crypto.randomUUID());
             setForm({ category: 'ROAD', description: '', lat: '12.9716', lng: '77.5946', severity: 'MEDIUM' });
@@ -76,6 +84,7 @@ export default function CitizenDashboard() {
             setView('list');
         } catch (err: any) {
             setMsg(err.response?.data?.error || 'Submission failed');
+
         } finally { setLoading(false); }
     };
 
@@ -171,7 +180,23 @@ export default function CitizenDashboard() {
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-1">Location Pin *</label>
-                                <LocationPicker lat={form.lat} lng={form.lng} onChange={(lat, lng) => setForm(f => ({ ...f, lat, lng }))} />
+                                <LocationPicker
+                                    lat={form.lat}
+                                    lng={form.lng}
+                                    onChange={(lat, lng) => {
+                                        setForm(f => ({ ...f, lat, lng }));
+                                        // Auto-detect ward from pin
+                                        getNearestWard(parseFloat(lat), parseFloat(lng))
+                                            .then(r => setDetectedWard(r.data.ward?.name || null))
+                                            .catch(() => { });
+                                    }}
+                                />
+                                {detectedWard && (
+                                    <div className="mt-2 flex items-center gap-2 text-sm bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
+                                        <span>📍</span>
+                                        <span className="text-indigo-700">This issue will be filed under: <strong>{detectedWard}</strong></span>
+                                    </div>
+                                )}
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-1">Photo (optional)</label>

@@ -2,6 +2,7 @@ const pool = require('../../config/db');
 const { validateTransition } = require('../../utils/lifecycle');
 const { calculatePriority, getSLADeadline } = require('../../utils/priority');
 const { detectDuplicate } = require('../../utils/duplicate');
+const { getWardByLocation } = require('../../utils/wardRouter');
 const { CATEGORIES } = require('../../config/constants');
 
 /**
@@ -26,15 +27,32 @@ const createIssue = async ({ category, description, lat, lng, severity, reporter
         const incidentResult = await client.query('SELECT active FROM incident_modes ORDER BY id DESC LIMIT 1');
         const incidentMode = incidentResult.rows[0]?.active || false;
 
-        // 2. Find ward by approximate location (simplified: use reporter's ward)
-        const reporterResult = await client.query('SELECT ward_id FROM users WHERE id = $1', [reporterId]);
-        const wardId = reporterResult.rows[0]?.ward_id;
+        // 2. Determine ward from pinned location (real Chennai routing)
+        const wardResult = await getWardByLocation(lat, lng);
+        const wardId = wardResult?.id || null;
 
         // 3. Duplicate detection
         const duplicate = await detectDuplicate(lat, lng, category, incidentMode);
 
         if (duplicate) {
-            // Attach as issue_report to parent, boost priority
+            // Guard 1: Check if this citizen is the ORIGINAL reporter of the parent issue
+            const isOriginalReporter = duplicate.reporter_id === reporterId;
+
+            // Guard 2: Check if this citizen already submitted a corroborating report
+            const alreadyReportedResult = await client.query(
+                'SELECT 1 FROM issue_reports WHERE issue_id = $1 AND reporter_id = $2 LIMIT 1',
+                [duplicate.id, reporterId]
+            );
+            const alreadyReported = alreadyReportedResult.rowCount > 0;
+
+            if (isOriginalReporter || alreadyReported) {
+                // Same user re-reporting their own issue — silently ignore, no priority boost
+                await client.query('ROLLBACK');
+                return { duplicate: true, parentIssueId: duplicate.id, selfDuplicate: true };
+
+            }
+
+            // Different citizen reporting same issue — valid signal, boost priority
             await client.query(
                 'INSERT INTO issue_reports (issue_id, reporter_id, description) VALUES ($1, $2, $3)',
                 [duplicate.id, reporterId, description]
@@ -68,6 +86,7 @@ const createIssue = async ({ category, description, lat, lng, severity, reporter
             await client.query('COMMIT');
             return { duplicate: true, parentIssueId: duplicate.id };
         }
+
 
         // 4. Find department by category + ward
         const deptResult = await client.query(
@@ -150,7 +169,7 @@ const autoAssignWorker = async (issueId, departmentId, wardId) => {
     if (result.rows.length === 0) {
         // Fallback constraint activated: all workers busy or missing.
         await pool.query(
-            "INSERT INTO escalations (issue_id, escalated_to_role, reason) VALUES ($1, 'SUPERVISOR', 'Fallback Queue: All workers in ward are overloaded (>= 5 assignments) or absent.')",
+            "INSERT INTO escalations (issue_id, escalated_to, level, reason) VALUES ($1, 'SUPERVISOR', 1, 'Fallback Queue: All workers in ward are overloaded (>= 5 assignments) or absent.')",
             [issueId]
         );
         return; // Stays NEW, fallback queue kicks in.
@@ -382,7 +401,7 @@ const verifyResolution = async (issueId, citizenId, accepted, reason) => {
 
             // Generate an escalation for the supervisor due to reopen
             await client.query(
-                "INSERT INTO escalations (issue_id, escalated_to_role, reason) VALUES ($1, 'SUPERVISOR', 'Citizen rejected resolution. Issue REOPENED.')",
+                "INSERT INTO escalations (issue_id, escalated_to, level, reason) VALUES ($1, 'SUPERVISOR', 1, 'Citizen rejected resolution. Issue REOPENED.')",
                 [issueId]
             );
         }
