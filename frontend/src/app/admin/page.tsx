@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import {
     getIssues, getOverview, getWardStats, getSLAMetrics, getDeptPerformance,
     getIncidentMode, toggleIncidentMode, getAllUsers,
-    getPendingApprovals, approveUser, rejectUser
+    getPendingApprovals, approveUser, rejectUser, getWards
 } from '@/lib/api';
 import StatusBadge from '@/components/StatusBadge';
 import FilterBar from '@/components/FilterBar';
@@ -32,11 +32,22 @@ export default function AdminDashboard() {
     const [tab, setTab] = useState<'overview' | 'issues' | 'users' | 'analytics' | 'map' | 'approvals'>('overview');
     const [msg, setMsg] = useState('');
     const [filters, setFilters] = useState({});
+    const [wards, setWards] = useState<any[]>([]);
+    const [wardName, setWardName] = useState<string>('');
 
     useEffect(() => {
         const u = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('civiflow_user') || 'null') : null;
         if (!u || u.role !== 'ADMIN') { router.push('/login'); return; }
         setUser(u);
+        // Load ward list to resolve names
+        getWards().then(res => {
+            const wardList = res.data?.wards || res.data || [];
+            setWards(wardList);
+            if (u.ward_id) {
+                const found = wardList.find((w: any) => w.id === u.ward_id);
+                if (found) setWardName(found.name);
+            }
+        }).catch(() => { });
         fetchAll({});
     }, []);
 
@@ -93,7 +104,8 @@ export default function AdminDashboard() {
                 <div className="flex items-center gap-3">
                     <span className="text-xl font-bold">🏛 CiviFlow</span>
                     <span className="bg-slate-700 text-xs rounded-full px-2 py-0.5">Admin</span>
-                    {incident?.active && <span className="bg-red-600 text-xs rounded-full px-2 py-0.5 animate-pulse">🚨 INCIDENT MODE</span>}
+                    {wardName && <span className="bg-indigo-700 text-xs rounded-full px-2 py-0.5">📍 {wardName}</span>}
+                    {incident?.active && <span className="bg-red-600 text-xs rounded-full px-2 py-0.5 animate-pulse">🚨 WARD INCIDENT MODE</span>}
                 </div>
                 <div className="flex items-center gap-3">
                     <span className="text-sm opacity-70">⚙️ {user?.name}</span>
@@ -107,9 +119,9 @@ export default function AdminDashboard() {
                 {/* Incident Mode Banner */}
                 <div className={`rounded-xl p-4 mb-6 flex items-center justify-between ${incident?.active ? 'bg-red-50 border border-red-300' : 'bg-slate-100 border border-slate-200'}`}>
                     <div>
-                        <span className="font-semibold text-sm">{incident?.active ? '🚨 Incident Mode is ACTIVE' : '🔵 Incident Mode: Inactive'}</span>
-                        {incident?.active && <p className="text-xs text-red-600 mt-0.5">Priority weights ×1.5 • Expanded duplicate radius • Emergency queue active</p>}
-                        {!incident?.active && <p className="text-xs text-slate-500 mt-0.5">Activate to increase response urgency city-wide</p>}
+                        <span className="font-semibold text-sm">{incident?.active ? `🚨 Incident Mode ACTIVE — ${wardName || 'Your Ward'}` : '🔵 Incident Mode: Inactive'}</span>
+                        {incident?.active && <p className="text-xs text-red-600 mt-0.5">Priority weights ×1.5 • Expanded duplicate radius • Emergency queue active — scoped to this ward only</p>}
+                        {!incident?.active && <p className="text-xs text-slate-500 mt-0.5">Activate to increase response urgency for <strong>{wardName || 'your ward'}</strong> only</p>}
                     </div>
                     <button onClick={handleIncidentToggle}
                         className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${incident?.active ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white'}`}>
@@ -232,7 +244,7 @@ export default function AdminDashboard() {
                 {tab === 'analytics' && (
                     <div className="grid grid-cols-2 gap-6">
                         <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-                            <h3 className="font-semibold text-slate-700 mb-4 text-sm">SLA Metrics by Category</h3>
+                            <h3 className="font-semibold text-slate-700 mb-4 text-sm">{wardName ? `${wardName} – SLA Metrics by Category` : 'SLA Metrics by Category'}</h3>
                             <ResponsiveContainer width="100%" height={240}>
                                 <BarChart data={slaMetrics} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
                                     <XAxis dataKey="category" tick={{ fontSize: 9 }} />
@@ -270,7 +282,7 @@ export default function AdminDashboard() {
                     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                         <div className="p-4 border-b border-slate-100 flex items-center justify-between">
                             <div>
-                                <h3 className="font-semibold text-slate-700 text-sm">City-wide Issue Heatmap</h3>
+                                <h3 className="font-semibold text-slate-700 text-sm">{wardName ? `${wardName} Issue Map` : 'City-wide Issue Heatmap'}</h3>
                                 <p className="text-xs text-slate-400 mt-0.5">🟢 Low priority &nbsp; 🟡 Medium &nbsp; 🟠 High &nbsp; 🔴 SLA Breached</p>
                             </div>
                             <span className="text-xs text-slate-500">{issues.length} issues plotted</span>
@@ -284,6 +296,7 @@ export default function AdminDashboard() {
                 {/* Users Tab */}
                 {tab === 'users' && (
                     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                        {wardName && <div className="px-5 py-3 bg-indigo-50 border-b border-indigo-100 text-xs text-indigo-700 font-medium">Showing users for: <strong>{wardName}</strong></div>}
                         <table className="w-full text-sm">
                             <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
                                 <tr>{['Name', 'Email', 'Role', 'Ward', 'Status', 'Joined'].map(h => <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>)}</tr>
@@ -296,11 +309,11 @@ export default function AdminDashboard() {
                                         <td className="px-4 py-3">
                                             <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${u.role === 'ADMIN' ? 'bg-slate-800 text-white' : u.role === 'SUPERVISOR' ? 'bg-teal-100 text-teal-700' : u.role === 'WORKER' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'}`}>{u.role}</span>
                                         </td>
-                                        <td className="px-4 py-3 text-xs">{u.ward_id || '-'}</td>
+                                        <td className="px-4 py-3 text-xs">{u.ward_name || (u.ward_id ? `Ward ${u.ward_id}` : '—')}</td>
                                         <td className="px-4 py-3">
                                             <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${u.verification_status === 'APPROVED' ? 'bg-green-100 text-green-700' :
-                                                    u.verification_status === 'PENDING' ? 'bg-amber-100 text-amber-700' :
-                                                        'bg-red-100 text-red-700'
+                                                u.verification_status === 'PENDING' ? 'bg-amber-100 text-amber-700' :
+                                                    'bg-red-100 text-red-700'
                                                 }`}>{u.verification_status || 'APPROVED'}</span>
                                         </td>
                                         <td className="px-4 py-3 text-xs text-slate-400">{new Date(u.created_at).toLocaleDateString()}</td>

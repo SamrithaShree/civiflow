@@ -23,13 +23,18 @@ const createIssue = async ({ category, description, lat, lng, severity, reporter
     try {
         await client.query('BEGIN');
 
-        // 1. Check incident mode
-        const incidentResult = await client.query('SELECT active FROM incident_modes ORDER BY id DESC LIMIT 1');
-        const incidentMode = incidentResult.rows[0]?.active || false;
-
+        // 1. Check incident mode (determined after we know the ward, so do ward lookup first)
         // 2. Determine ward from pinned location (real Chennai routing)
         const wardResult = await getWardByLocation(lat, lng);
         const wardId = wardResult?.id || null;
+
+        // Now check incident mode scoped to this ward
+        const incidentResult = await client.query(
+            `SELECT active FROM incident_modes WHERE ward_id IS NOT DISTINCT FROM $1 ORDER BY id DESC LIMIT 1`,
+            [wardId]
+        );
+
+        const incidentMode = incidentResult.rows[0]?.active || false;
 
         // 3. Duplicate detection
         const duplicate = await detectDuplicate(lat, lng, category, incidentMode);
@@ -394,7 +399,10 @@ const verifyResolution = async (issueId, citizenId, accepted, reason) => {
 
         // If reopened: boost priority, notify supervisor
         if (!accepted) {
-            const incidentResult = await client.query('SELECT active FROM incident_modes ORDER BY id DESC LIMIT 1');
+            const incidentResult = await client.query(
+                `SELECT active FROM incident_modes WHERE ward_id IS NOT DISTINCT FROM $1 ORDER BY id DESC LIMIT 1`,
+                [issue.ward_id || null]
+            );
             const incidentMode = incidentResult.rows[0]?.active || false;
             const newScore = calculatePriority({ category: issue.category, severity: issue.severity, isReopened: true, incidentMode });
             await client.query('UPDATE issues SET priority_score = $1 WHERE id = $2', [newScore, issueId]);

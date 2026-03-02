@@ -73,8 +73,11 @@ const runSLACheck = async () => {
                 console.log(`[SLAWorker] L2 Escalation: ${issue.ticket_id} → ADMIN (${hoursOverdue.toFixed(1)}h)`);
             }
 
-            // Boost priority
-            const incidentResult = await pool.query('SELECT active FROM incident_modes ORDER BY id DESC LIMIT 1');
+            // Boost priority — check incident mode for *this issue's ward*
+            const incidentResult = await pool.query(
+                `SELECT active FROM incident_modes WHERE ward_id IS NOT DISTINCT FROM $1 ORDER BY id DESC LIMIT 1`,
+                [issue.ward_id || null]
+            );
             const incidentMode = incidentResult.rows[0]?.active || false;
             const newScore = calculatePriority({
                 category: issue.category, severity: issue.severity,

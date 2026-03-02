@@ -5,27 +5,29 @@ const { calculatePriority } = require('../../utils/priority');
 /**
  * Toggle incident mode on or off.
  */
-const toggleIncidentMode = async (userId, activate, reason) => {
+const toggleIncidentMode = async (userId, activate, reason, wardId) => {
     let resultRow;
     if (activate) {
-        await pool.query(`UPDATE incident_modes SET active = FALSE, ended_at = NOW() WHERE active = TRUE`);
+        // Deactivate any existing active incident mode for this ward
+        await pool.query(`UPDATE incident_modes SET active = FALSE, ended_at = NOW() WHERE active = TRUE AND ward_id IS NOT DISTINCT FROM $1`, [wardId || null]);
         const result = await pool.query(
-            `INSERT INTO incident_modes (active, triggered_by, reason, started_at) VALUES (TRUE, $1, $2, NOW()) RETURNING *`,
-            [userId, reason || 'Incident mode activated by admin']
+            `INSERT INTO incident_modes (active, triggered_by, reason, started_at, ward_id) VALUES (TRUE, $1, $2, NOW(), $3) RETURNING *`,
+            [userId, reason || 'Incident mode activated by admin', wardId || null]
         );
-        console.log('[AdminService] Incident mode ACTIVATED');
+        console.log(`[AdminService] Incident mode ACTIVATED${wardId ? ` for ward ${wardId}` : ' (global)'}`);
         resultRow = result.rows[0];
     } else {
-        await pool.query(`UPDATE incident_modes SET active = FALSE, ended_at = NOW() WHERE active = TRUE`);
-        console.log('[AdminService] Incident mode DEACTIVATED');
+        await pool.query(`UPDATE incident_modes SET active = FALSE, ended_at = NOW() WHERE active = TRUE AND ward_id IS NOT DISTINCT FROM $1`, [wardId || null]);
+        console.log(`[AdminService] Incident mode DEACTIVATED${wardId ? ` for ward ${wardId}` : ' (global)'}`);
         resultRow = { active: false, ended_at: new Date() };
     }
 
-    // Background job: instantly recalculate priority for all active issues
+    // Background job: recalculate priority for issues in this ward only
     setImmediate(async () => {
         try {
-            console.log(`[AdminService] Recalculating all priorities. Incident mode: ${activate}`);
-            const issuesRes = await pool.query(`SELECT id, category, severity, status, created_at, reopen_count FROM issues WHERE status NOT IN ('CLOSED')`);
+            console.log(`[AdminService] Recalculating priorities${wardId ? ` for ward ${wardId}` : ''}. Incident mode: ${activate}`);
+            const wardFilter = wardId ? `AND ward_id = ${wardId}` : '';
+            const issuesRes = await pool.query(`SELECT id, category, severity, status, created_at, reopen_count FROM issues WHERE status NOT IN ('CLOSED') ${wardFilter}`);
             for (const issue of issuesRes.rows) {
                 const ageInDays = (Date.now() - new Date(issue.created_at).getTime()) / (1000 * 60 * 60 * 24);
                 const score = calculatePriority({
@@ -37,7 +39,7 @@ const toggleIncidentMode = async (userId, activate, reason) => {
                 });
                 await pool.query('UPDATE issues SET priority_score = $1 WHERE id = $2', [score, issue.id]);
             }
-            console.log(`[AdminService] Successfully recalculated ${issuesRes.rowCount} active queues.`);
+            console.log(`[AdminService] Recalculated ${issuesRes.rowCount} issues.`);
         } catch (err) {
             console.error('[AdminService] Fallback priority recalculation failed:', err);
         }
@@ -46,8 +48,10 @@ const toggleIncidentMode = async (userId, activate, reason) => {
     return resultRow;
 };
 
-const getIncidentMode = async () => {
-    const result = await pool.query('SELECT * FROM incident_modes ORDER BY id DESC LIMIT 1');
+const getIncidentMode = async (wardId) => {
+    const params = wardId ? [wardId] : [];
+    const wardFilter = wardId ? `WHERE ward_id = $1` : `WHERE ward_id IS NULL`;
+    const result = await pool.query(`SELECT * FROM incident_modes ${wardFilter} ORDER BY id DESC LIMIT 1`, params);
     return result.rows[0] || { active: false };
 };
 
@@ -74,12 +78,29 @@ const createDepartment = async ({ name, category_codes, ward_id, supervisor_id }
     return result.rows[0];
 };
 
-const getAllUsers = async (role) => {
-    let query = `SELECT id, name, email, role, ward_id, phone, is_active, verification_status, rejection_reason, created_at FROM users`;
+const getAllUsers = async (role, wardId) => {
+    const conditions = [];
     const params = [];
-    if (role) { query += ` WHERE role = $1`; params.push(role); }
-    query += ' ORDER BY created_at DESC';
-    const result = await pool.query(query, params);
+
+    if (wardId) {
+        conditions.push(`u.ward_id = $${params.push(wardId)}`);
+    }
+    if (role) {
+        conditions.push(`u.role = $${params.push(role)}`);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const result = await pool.query(
+        `SELECT u.id, u.name, u.email, u.role, u.ward_id, u.phone,
+                u.is_active, u.verification_status, u.rejection_reason, u.created_at,
+                w.name as ward_name
+         FROM users u
+         LEFT JOIN wards w ON w.id = u.ward_id
+         ${whereClause}
+         ORDER BY u.created_at DESC`,
+        params
+    );
     return result.rows;
 };
 
