@@ -11,5 +11,8 @@ router.get('/incident-mode', controller.getIncidentMode);
 router.get('/departments', controller.getDepartments);
 router.post('/departments', controller.createDepartment);
 router.get('/users', controller.getUsers);
+router.get('/pending-approvals', controller.getPendingApprovals);
+router.patch('/users/:id/approve', controller.approveUser);
+router.patch('/users/:id/reject', controller.rejectUser);
 
 module.exports = router;

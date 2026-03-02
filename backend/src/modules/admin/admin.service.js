@@ -75,7 +75,7 @@ const createDepartment = async ({ name, category_codes, ward_id, supervisor_id }
 };
 
 const getAllUsers = async (role) => {
-    let query = `SELECT id, name, email, role, ward_id, phone, is_active, created_at FROM users`;
+    let query = `SELECT id, name, email, role, ward_id, phone, is_active, verification_status, rejection_reason, created_at FROM users`;
     const params = [];
     if (role) { query += ` WHERE role = $1`; params.push(role); }
     query += ' ORDER BY created_at DESC';
@@ -83,4 +83,94 @@ const getAllUsers = async (role) => {
     return result.rows;
 };
 
-module.exports = { toggleIncidentMode, getIncidentMode, getAllDepartments, createDepartment, getAllUsers };
+// ─── New: Approval Workflow ──────────────────────────────────────────────────
+
+/**
+ * Get all pending registration approvals for admin's ward.
+ * Admins see WORKER and SUPERVISOR pending in their ward.
+ */
+const getPendingApprovals = async (adminWardId) => {
+    const params = ['PENDING'];
+    let wardFilter = '';
+    if (adminWardId) {
+        wardFilter = 'AND u.ward_id = $2';
+        params.push(adminWardId);
+    }
+    const result = await pool.query(
+        `SELECT u.id, u.name, u.email, u.role, u.phone, u.ward_id,
+                u.worker_id_number, u.supervisor_id_number,
+                u.verification_status, u.created_at,
+                w.name as ward_name
+         FROM users u
+         LEFT JOIN wards w ON w.id = u.ward_id
+         WHERE u.verification_status = $1
+           AND u.role IN ('WORKER', 'SUPERVISOR')
+           ${wardFilter}
+         ORDER BY u.created_at ASC`,
+        params
+    );
+    return result.rows;
+};
+
+/**
+ * Approve a pending user registration.
+ */
+const approveUser = async (userId, adminUserId) => {
+    // Verify admin is from same ward as the user (or is a super-admin with no ward restriction)
+    const adminRes = await pool.query('SELECT id, ward_id, role FROM users WHERE id = $1', [adminUserId]);
+    const admin = adminRes.rows[0];
+    if (!admin) throw new Error('Admin not found.');
+
+    const userRes = await pool.query(
+        'SELECT id, name, email, role, ward_id, verification_status FROM users WHERE id = $1',
+        [userId]
+    );
+    const user = userRes.rows[0];
+    if (!user) throw new Error('User not found.');
+    if (user.verification_status === 'APPROVED') throw new Error('User is already approved.');
+
+    // Ward restriction: admin can only approve users in their ward
+    if (admin.ward_id && user.ward_id && admin.ward_id !== user.ward_id) {
+        throw new Error('You can only approve users assigned to your ward.');
+    }
+
+    const result = await pool.query(
+        `UPDATE users SET is_active = TRUE, verification_status = 'APPROVED', rejection_reason = NULL, updated_at = NOW()
+         WHERE id = $1
+         RETURNING id, name, email, role, ward_id, is_active, verification_status`,
+        [userId]
+    );
+    return result.rows[0];
+};
+
+/**
+ * Reject a pending user registration.
+ */
+const rejectUser = async (userId, adminUserId, reason) => {
+    const adminRes = await pool.query('SELECT id, ward_id FROM users WHERE id = $1', [adminUserId]);
+    const admin = adminRes.rows[0];
+    if (!admin) throw new Error('Admin not found.');
+
+    const userRes = await pool.query('SELECT id, ward_id, verification_status FROM users WHERE id = $1', [userId]);
+    const user = userRes.rows[0];
+    if (!user) throw new Error('User not found.');
+
+    if (admin.ward_id && user.ward_id && admin.ward_id !== user.ward_id) {
+        throw new Error('You can only reject users assigned to your ward.');
+    }
+
+    const result = await pool.query(
+        `UPDATE users SET is_active = FALSE, verification_status = 'REJECTED', rejection_reason = $2, updated_at = NOW()
+         WHERE id = $1
+         RETURNING id, name, email, role, verification_status, rejection_reason`,
+        [userId, reason || 'Registration rejected by administrator.']
+    );
+    return result.rows[0];
+};
+
+module.exports = {
+    toggleIncidentMode, getIncidentMode,
+    getAllDepartments, createDepartment,
+    getAllUsers,
+    getPendingApprovals, approveUser, rejectUser
+};

@@ -3,7 +3,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     getIssues, getOverview, getWardStats, getSLAMetrics, getDeptPerformance,
-    getIncidentMode, toggleIncidentMode, getAllUsers
+    getIncidentMode, toggleIncidentMode, getAllUsers,
+    getPendingApprovals, approveUser, rejectUser
 } from '@/lib/api';
 import StatusBadge from '@/components/StatusBadge';
 import FilterBar from '@/components/FilterBar';
@@ -25,7 +26,10 @@ export default function AdminDashboard() {
     const [total, setTotal] = useState(0);
     const [incident, setIncident] = useState<any>(null);
     const [users, setUsers] = useState<any[]>([]);
-    const [tab, setTab] = useState<'overview' | 'issues' | 'users' | 'analytics' | 'map'>('overview');
+    const [approvals, setApprovals] = useState<any[]>([]);
+    const [rejectingId, setRejectingId] = useState<number | null>(null);
+    const [rejectReason, setRejectReason] = useState('');
+    const [tab, setTab] = useState<'overview' | 'issues' | 'users' | 'analytics' | 'map' | 'approvals'>('overview');
     const [msg, setMsg] = useState('');
     const [filters, setFilters] = useState({});
 
@@ -38,9 +42,9 @@ export default function AdminDashboard() {
 
     const fetchAll = useCallback(async (params: any) => {
         try {
-            const [ovRes, wdRes, slRes, dpRes, isRes, inRes, urRes] = await Promise.all([
+            const [ovRes, wdRes, slRes, dpRes, isRes, inRes, urRes, appRes] = await Promise.all([
                 getOverview(), getWardStats(), getSLAMetrics(), getDeptPerformance(),
-                getIssues(params), getIncidentMode(), getAllUsers()
+                getIssues(params), getIncidentMode(), getAllUsers(), getPendingApprovals()
             ]);
             setOverview(ovRes.data);
             setWardStats(wdRes.data || []);
@@ -50,6 +54,7 @@ export default function AdminDashboard() {
             setTotal(isRes.data?.total || 0);
             setIncident(inRes.data);
             setUsers(urRes.data || []);
+            setApprovals(appRes.data?.approvals || []);
         } catch (err: any) {
             setMsg('Failed to load data: ' + (err.response?.data?.error || err.message));
         }
@@ -130,12 +135,15 @@ export default function AdminDashboard() {
                 )}
 
                 {/* Tabs */}
-                <div className="flex gap-2 mb-5">
-                    {(['overview', 'issues', 'analytics', 'map', 'users'] as const).map(t => (
+                <div className="flex gap-2 mb-5 flex-wrap">
+                    {(['overview', 'issues', 'analytics', 'map', 'users', 'approvals'] as const).map(t => (
                         <button key={t} onClick={() => setTab(t)}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition ${tab === t ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-400'}`}>
-                            {t === 'map' ? '🗺️ Map' : t}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition relative ${tab === t ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-400'}`}>
+                            {t === 'map' ? '🗺️ Map' : t === 'approvals' ? '✅ Approvals' : t}
                             {t === 'issues' ? ` (${total})` : ''}
+                            {t === 'approvals' && approvals.length > 0 && (
+                                <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">{approvals.length}</span>
+                            )}
                         </button>
                     ))}
                 </div>
@@ -278,7 +286,7 @@ export default function AdminDashboard() {
                     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                         <table className="w-full text-sm">
                             <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
-                                <tr>{['Name', 'Email', 'Role', 'Ward', 'Phone', 'Joined'].map(h => <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>)}</tr>
+                                <tr>{['Name', 'Email', 'Role', 'Ward', 'Status', 'Joined'].map(h => <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>)}</tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {users.map((u: any) => (
@@ -289,12 +297,98 @@ export default function AdminDashboard() {
                                             <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${u.role === 'ADMIN' ? 'bg-slate-800 text-white' : u.role === 'SUPERVISOR' ? 'bg-teal-100 text-teal-700' : u.role === 'WORKER' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'}`}>{u.role}</span>
                                         </td>
                                         <td className="px-4 py-3 text-xs">{u.ward_id || '-'}</td>
-                                        <td className="px-4 py-3 text-xs">{u.phone || '-'}</td>
+                                        <td className="px-4 py-3">
+                                            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${u.verification_status === 'APPROVED' ? 'bg-green-100 text-green-700' :
+                                                    u.verification_status === 'PENDING' ? 'bg-amber-100 text-amber-700' :
+                                                        'bg-red-100 text-red-700'
+                                                }`}>{u.verification_status || 'APPROVED'}</span>
+                                        </td>
                                         <td className="px-4 py-3 text-xs text-slate-400">{new Date(u.created_at).toLocaleDateString()}</td>
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+                )}
+
+                {/* Approvals Tab */}
+                {tab === 'approvals' && (
+                    <div className="space-y-4">
+                        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 text-sm text-indigo-800">
+                            <strong>📋 Pending Registration Approvals</strong> — Review and approve or reject Worker/Supervisor registrations for your ward.
+                        </div>
+                        {approvals.length === 0 ? (
+                            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 text-center">
+                                <div className="text-4xl mb-3">✅</div>
+                                <div className="text-slate-500 font-medium">No pending approvals</div>
+                                <div className="text-slate-400 text-sm mt-1">All registrations have been processed.</div>
+                            </div>
+                        ) : approvals.map((u: any) => (
+                            <div key={u.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                                <div className="flex items-start justify-between gap-4">
+                                    <div className="flex-1">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="font-semibold text-slate-800">{u.name}</span>
+                                            <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${u.role === 'WORKER' ? 'bg-blue-100 text-blue-700' : 'bg-violet-100 text-violet-700'
+                                                }`}>{u.role}</span>
+                                            <span className="bg-amber-100 text-amber-700 text-xs font-semibold px-2 py-0.5 rounded-full">⏳ Pending</span>
+                                        </div>
+                                        <div className="text-sm text-slate-500 space-y-1">
+                                            <div>📧 {u.email} {u.phone ? `· 📞 ${u.phone}` : ''}</div>
+                                            <div>🏘️ Ward: <strong>{u.ward_name || u.ward_id || '—'}</strong></div>
+                                            {u.worker_id_number && <div>🪪 Worker ID: <strong className="font-mono">{u.worker_id_number}</strong></div>}
+                                            {u.supervisor_id_number && <div>🪪 Supervisor ID: <strong className="font-mono">{u.supervisor_id_number}</strong></div>}
+                                            <div className="text-xs text-slate-400">Registered: {new Date(u.created_at).toLocaleString()}</div>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-col gap-2 min-w-[120px]">
+                                        <button
+                                            onClick={async () => {
+                                                try {
+                                                    await approveUser(u.id);
+                                                    setMsg(`✅ ${u.name} approved successfully.`);
+                                                    fetchAll(filters);
+                                                } catch (err: any) {
+                                                    setMsg('Error: ' + (err.response?.data?.error || err.message));
+                                                }
+                                            }}
+                                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold rounded-lg transition"
+                                        >✓ Approve</button>
+                                        <button
+                                            onClick={() => setRejectingId(rejectingId === u.id ? null : u.id)}
+                                            className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-sm font-semibold rounded-lg transition"
+                                        >✕ Reject</button>
+                                    </div>
+                                </div>
+                                {rejectingId === u.id && (
+                                    <div className="mt-4 pt-4 border-t border-slate-100">
+                                        <label className="block text-sm text-slate-500 mb-1">Rejection Reason</label>
+                                        <div className="flex gap-2">
+                                            <input
+                                                value={rejectReason}
+                                                onChange={e => setRejectReason(e.target.value)}
+                                                placeholder="e.g. Invalid Worker ID provided"
+                                                className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400"
+                                            />
+                                            <button
+                                                onClick={async () => {
+                                                    try {
+                                                        await rejectUser(u.id, rejectReason);
+                                                        setMsg(`❌ ${u.name}'s registration rejected.`);
+                                                        setRejectingId(null);
+                                                        setRejectReason('');
+                                                        fetchAll(filters);
+                                                    } catch (err: any) {
+                                                        setMsg('Error: ' + (err.response?.data?.error || err.message));
+                                                    }
+                                                }}
+                                                className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm font-semibold rounded-lg transition"
+                                            >Confirm</button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
                     </div>
                 )}
             </div>

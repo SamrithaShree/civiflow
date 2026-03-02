@@ -72,4 +72,9 @@ export const getWards = () => api.get('/wards');
 export const getNearestWard = (lat: number, lng: number) =>
     api.get('/wards/nearest', { params: { lat, lng } });
 
+// Registration approval (Admin)
+export const getPendingApprovals = () => api.get('/admin/pending-approvals');
+export const approveUser = (id: number) => api.patch(`/admin/users/${id}/approve`);
+export const rejectUser = (id: number, reason: string) => api.patch(`/admin/users/${id}/reject`, { reason });
+
 export default api;

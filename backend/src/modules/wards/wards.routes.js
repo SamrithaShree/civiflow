@@ -15,16 +15,16 @@ router.get('/nearest', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// All routes below require auth
-router.use(authenticate);
-
-// GET /api/wards — list all wards
+// GET /api/wards — list all wards — PUBLIC (needed on registration page)
 router.get('/', async (req, res) => {
     try {
-        const result = await pool.query('SELECT id, name, city, centroid_lat, centroid_lng FROM wards ORDER BY name');
+        const result = await pool.query('SELECT id, name, city FROM wards ORDER BY name');
         res.json({ wards: result.rows });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// All routes below require auth
+router.use(authenticate);
 
 // GET /api/wards/departments — list departments with ward info
 router.get('/departments', async (req, res) => {

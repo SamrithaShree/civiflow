@@ -23,4 +23,25 @@ const getUsers = async (req, res) => {
     try { res.json(await adminService.getAllUsers(req.query.role)); } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
-module.exports = { toggleIncidentMode, getIncidentMode, getDepartments, createDepartment, getUsers };
+const getPendingApprovals = async (req, res) => {
+    try {
+        const data = await adminService.getPendingApprovals(req.user.ward_id);
+        res.json({ approvals: data, total: data.length });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+const approveUser = async (req, res) => {
+    try {
+        const user = await adminService.approveUser(parseInt(req.params.id), req.user.id);
+        res.json({ message: 'User approved successfully.', user });
+    } catch (err) { res.status(400).json({ error: err.message }); }
+};
+
+const rejectUser = async (req, res) => {
+    try {
+        const user = await adminService.rejectUser(parseInt(req.params.id), req.user.id, req.body.reason);
+        res.json({ message: 'User registration rejected.', user });
+    } catch (err) { res.status(400).json({ error: err.message }); }
+};
+
+module.exports = { toggleIncidentMode, getIncidentMode, getDepartments, createDepartment, getUsers, getPendingApprovals, approveUser, rejectUser };
