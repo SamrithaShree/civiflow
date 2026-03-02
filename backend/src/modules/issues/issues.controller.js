@@ -64,10 +64,15 @@ const create = async (req, res) => {
 const list = async (req, res) => {
     try {
         const { status, category, search, sla_breached, ward_id, page, limit } = req.query;
+
+        // Admins see all issues across all wards by default. 
+        // Only filter by ward if ward_id is explicitly provided in the query.
+        const effectiveWardId = ward_id || (req.user.role === 'ADMIN' ? undefined : req.user.ward_id);
+
         const result = await issuesService.getIssues({
             role: req.user.role,
             userId: req.user.id,
-            wardId: ward_id || req.user.ward_id,
+            wardId: effectiveWardId,
             status,
             category,
             search,
