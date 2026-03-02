@@ -11,6 +11,8 @@ const IssueMap = dynamic(() => import('@/components/IssueMap'), { ssr: false });
 
 const CATEGORIES = ['ROAD', 'WATER', 'SANITATION', 'ELECTRICITY', 'DRAINAGE', 'PARK', 'STREETLIGHT', 'NOISE', 'OTHER'];
 const SEVERITIES = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
+// Strip /api suffix to get base host for static files
+const API_HOST = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api').replace('/api', '');
 
 export default function CitizenDashboard() {
     const router = useRouter();
@@ -246,7 +248,7 @@ export default function CitizenDashboard() {
                                     <p className="font-semibold text-orange-800 text-sm mb-2">🔍 Resolution Review Required</p>
                                     <p className="text-sm text-orange-700 mb-3">The assigned worker has marked this issue as resolved. Please review the resolution photos and confirm.</p>
                                     {selectedIssue.media?.filter((m: any) => m.stage === 'RESOLUTION').map((m: any) => (
-                                        <img key={m.id} src={`http://localhost:5000${m.url}`} alt="Resolution" className="rounded-lg mb-2 max-h-48 object-cover" />
+                                        <img key={m.id} src={`${API_HOST}${m.url}`} alt="Resolution" className="rounded-lg mb-2 max-h-48 object-cover w-full" />
                                     ))}
                                     {selectedIssue.resolution_note && <p className="text-sm text-slate-600 mb-3">Note: {selectedIssue.resolution_note}</p>}
                                     <textarea value={verifyReason} onChange={e => setVerifyReason(e.target.value)}
