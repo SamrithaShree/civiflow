@@ -264,10 +264,34 @@ npm install
 Create a `.env` file:
 
 ```
+PORT =
+NODE_ENV =
+
+# # PostgreSQL
+# DB_HOST=
+# DB_PORT=
+# DB_NAME=
+# DB_USER=
+# DB_PASSWORD=
 DATABASE_URL=
+
+# JWT
 JWT_SECRET=
-REDIS_URL=
-PORT=
+JWT_EXPIRES_IN=
+
+# File Upload
+UPLOAD_DIR=
+MAX_FILE_SIZE=
+
+# SLA Hours per category
+SLA_ROAD=
+SLA_WATER=
+SLA_SANITATION=
+SLALELECTRICITY=
+SLA_OTHER=
+# Rate Limiting
+RATE_LIMIT_WINDOW_MS=
+RATE_LIMIT_MAX=
 ```
 
 ### 4. Run Migrations
