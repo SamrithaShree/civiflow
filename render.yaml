@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: civiflow-backend
+    env: node
+    region: singapore
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node src/app.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: SLA_ROAD
+        value: 48
+      - key: SLA_WATER
+        value: 24
+      - key: SLA_SANITATION
+        value: 24
+      - key: SLA_ELECTRICITY
+        value: 12
+      - key: SLA_OTHER
+        value: 72
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 900000
+      - key: RATE_LIMIT_MAX
+        value: 100
+      - key: MAX_FILE_SIZE
+        value: 5242880
+      - key: UPLOAD_DIR
+        value: uploads
