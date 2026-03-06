@@ -213,8 +213,18 @@ const getIssues = async ({ role, userId, wardId, status, category, search, sla_b
         whereConditions.push(`i.assigned_worker_id = $${paramIdx++}`);
         params.push(userId);
     } else if (role === 'SUPERVISOR') {
-        whereConditions.push(`d.supervisor_id = $${paramIdx++}`);
-        params.push(userId);
+        // Supervisors see all issues in their ward. If wardId is explicitly
+        // passed via query (filter), that takes precedence below.
+        if (!wardId) {
+            // Default: show all issues in their own ward
+            const supRes = await pool.query('SELECT ward_id FROM users WHERE id = $1', [userId]);
+            const supWardId = supRes.rows[0]?.ward_id;
+            if (supWardId) {
+                whereConditions.push(`i.ward_id = $${paramIdx++}`);
+                params.push(supWardId);
+            }
+            // If supervisor has no ward, they see nothing (safe default)
+        }
     }
     // ADMIN gets all
 
